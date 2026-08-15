@@ -21,45 +21,83 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for rich aesthetics
+# Custom CSS for Delhi Grid Dark visual theme
 st.markdown("""
 <style>
+    .stApp {
+        background-color: #0a0e1a;
+        color: #f3f4f6;
+    }
     .main {
-        background-color: #0e1117;
-        color: #e0e0e0;
+        background-color: #0a0e1a;
     }
     .metric-card {
-        background: rgba(255, 255, 255, 0.05);
+        background-color: #111827;
         border-radius: 10px;
-        padding: 15px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        backdrop-filter: blur(10px);
+        padding: 16px;
+        border: 1px solid #1f2937;
         text-align: center;
     }
-    .metric-value {
-        font-size: 28px;
+    .metric-value-amber {
+        font-size: 30px;
         font-weight: bold;
-        color: #00d2ff;
+        color: #fbbf24;
+    }
+    .metric-value-blue {
+        font-size: 30px;
+        font-weight: bold;
+        color: #38bdf8;
     }
     .metric-label {
-        font-size: 14px;
-        color: #a0a0a0;
+        font-size: 13px;
+        font-weight: 500;
+        color: #9ca3af;
+        margin-top: 4px;
     }
-    .risk-box-alert {
-        background-color: rgba(255, 75, 75, 0.2);
-        border: 1px solid #ff4b4b;
-        color: #ff4b4b;
-        padding: 12px;
-        border-radius: 8px;
-        font-weight: bold;
+    .risk-box-high {
+        background-color: rgba(239, 68, 68, 0.15);
+        border: 1px solid #ef4444;
+        color: #ef4444;
+        padding: 14px;
+        border-radius: 10px;
+        font-weight: 600;
+        text-align: left;
+    }
+    .risk-box-warning {
+        background-color: rgba(234, 179, 8, 0.15);
+        border: 1px solid #eab308;
+        color: #eab308;
+        padding: 14px;
+        border-radius: 10px;
+        font-weight: 600;
+        text-align: left;
     }
     .risk-box-normal {
-        background-color: rgba(9, 171, 59, 0.2);
-        border: 1px solid #09ab3b;
-        color: #09ab3b;
-        padding: 12px;
-        border-radius: 8px;
-        font-weight: bold;
+        background-color: rgba(34, 197, 94, 0.15);
+        border: 1px solid #22c55e;
+        color: #22c55e;
+        padding: 14px;
+        border-radius: 10px;
+        font-weight: 600;
+        text-align: left;
+    }
+    .header-title {
+        font-size: 34px;
+        font-weight: 800;
+        color: #fbbf24;
+        margin-bottom: 0px;
+    }
+    .header-subtitle {
+        font-size: 16px;
+        font-weight: 400;
+        color: #9ca3af;
+        margin-bottom: 20px;
+    }
+    .footer-text {
+        text-align: center;
+        color: #9ca3af;
+        font-size: 12px;
+        padding: 20px 0 10px 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -91,8 +129,9 @@ def main():
     metrics = payload['metrics']
     feat_imp = payload['feature_importances']
     
-    st.title("⚡ GridSathi — Delhi Electricity Demand Forecaster")
-    st.markdown("Real-data demand forecasting for Delhi power grid powered by XGBoost machine learning.")
+    # Professional Header
+    st.markdown('<div class="header-title">⚡ GridSathi</div>', unsafe_allow_html=True)
+    st.markdown('<div class="header-subtitle">Delhi Electricity Demand Forecasting & Grid Risk Monitor</div>', unsafe_allow_html=True)
     
     st.sidebar.header("🕹️ Scenario Inputs")
     
@@ -146,8 +185,8 @@ def main():
     with col1:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-value">{pred_demand:.1f} MW</div>
-            <div class="metric-label">Predicted Electricity Demand</div>
+            <div class="metric-value-amber">{pred_demand:.1f} MW</div>
+            <div class="metric-label">PREDICTED ELECTRICITY DEMAND</div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -155,30 +194,39 @@ def main():
         ac_proxy = float(processed_input_df['ac_load_proxy'].values[0])
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-value">{ac_proxy:.2f}</div>
-            <div class="metric-label">AC Load Proxy Index</div>
+            <div class="metric-value-blue">{ac_proxy:.2f}</div>
+            <div class="metric-label">AC LOAD PROXY INDEX</div>
         </div>
         """, unsafe_allow_html=True)
         
     with col3:
-        # Duck Curve Risk Indicator (rule-based analytical indicator)
-        is_duck_curve_risk = (18 <= hour_input <= 21) and (month_input in [5, 6, 7, 8]) and (ac_proxy > 1.5)
-        if is_duck_curve_risk:
+        # 3-Tier Rule-Based Risk Indicator
+        is_high_risk = (18 <= hour_input <= 21) and (month_input in [5, 6, 7, 8]) and (ac_proxy > 1.5)
+        is_warning_risk = not is_high_risk and ((ac_proxy > 1.0) or (temp_input > 35.0) or ((18 <= hour_input <= 21) and month_input in [5, 6, 7, 8]))
+        
+        if is_high_risk:
             st.markdown("""
-            <div class="risk-box-alert">
-                ⚠️ Duck Curve Risk Indicator: HIGH RISK<br>
-                <span style="font-size: 12px; font-weight: normal;">Evening peak demand ramp (18:00-21:00) during summer AC proxy surge.</span>
+            <div class="risk-box-high">
+                🔴 HIGH RISK — Rule-Based Risk Indicator<br>
+                <span style="font-size: 13px; font-weight: normal; color: #f3f4f6;">High evening demand/ramp conditions detected.</span>
+            </div>
+            """, unsafe_allow_html=True)
+        elif is_warning_risk:
+            st.markdown("""
+            <div class="risk-box-warning">
+                🟡 WARNING — Rule-Based Risk Indicator<br>
+                <span style="font-size: 13px; font-weight: normal; color: #f3f4f6;">Elevated demand/ramp conditions detected. Increased monitoring recommended.</span>
             </div>
             """, unsafe_allow_html=True)
         else:
             st.markdown("""
             <div class="risk-box-normal">
-                ✅ Duck Curve Risk Indicator: NORMAL<br>
-                <span style="font-size: 12px; font-weight: normal;">Grid operating within standard ramping limits.</span>
+                🟢 NORMAL — Rule-Based Risk Indicator<br>
+                <span style="font-size: 13px; font-weight: normal; color: #f3f4f6;">Demand conditions are within the expected operating range.</span>
             </div>
             """, unsafe_allow_html=True)
             
-    st.markdown("---")
+    st.markdown("<hr style='border-color: #1f2937;'>", unsafe_allow_html=True)
     
     # Tabs for detailed views
     tab1, tab2, tab3, tab4 = st.tabs([
@@ -221,9 +269,14 @@ def main():
             orientation="h",
             title="Feature Importance Scores",
             color="importance",
-            color_continuous_scale="Viridis"
+            color_continuous_scale=["#38bdf8", "#fbbf24"]
         )
-        fig_imp.update_layout(yaxis={'categoryorder': 'total ascending'}, template="plotly_dark")
+        fig_imp.update_layout(
+            yaxis={'categoryorder': 'total ascending'},
+            paper_bgcolor='#111827',
+            plot_bgcolor='#0a0e1a',
+            font=dict(color='#f3f4f6')
+        )
         st.plotly_chart(fig_imp, use_container_width=True)
         
     with tab3:
@@ -233,9 +286,16 @@ def main():
         sample_df['pred_load'] = model.predict(X_sample)
         
         fig_curve = go.Figure()
-        fig_curve.add_trace(go.Scatter(x=sample_df['datetime'], y=sample_df['load'], mode='lines', name='Actual Load (MW)', line=dict(color='#00d2ff', width=2)))
-        fig_curve.add_trace(go.Scatter(x=sample_df['datetime'], y=sample_df['pred_load'], mode='lines', name='Predicted Load (MW)', line=dict(color='#ff9900', width=1.5, dash='dash')))
-        fig_curve.update_layout(title="Delhi Power Consumption (Recent Holdout Window)", xaxis_title="Timestamp", yaxis_title="Load (MW)", template="plotly_dark")
+        fig_curve.add_trace(go.Scatter(x=sample_df['datetime'], y=sample_df['load'], mode='lines', name='Actual Load (MW)', line=dict(color='#38bdf8', width=2)))
+        fig_curve.add_trace(go.Scatter(x=sample_df['datetime'], y=sample_df['pred_load'], mode='lines', name='Predicted Load (MW)', line=dict(color='#fbbf24', width=1.5, dash='dash')))
+        fig_curve.update_layout(
+            title="Delhi Power Consumption (Recent Holdout Window)",
+            xaxis_title="Timestamp",
+            yaxis_title="Load (MW)",
+            paper_bgcolor='#111827',
+            plot_bgcolor='#0a0e1a',
+            font=dict(color='#f3f4f6')
+        )
         st.plotly_chart(fig_curve, use_container_width=True)
         
     with tab4:
@@ -268,11 +328,20 @@ def main():
             x="Simulated Temp (°C)",
             y="Predicted Demand (MW)",
             markers=True,
-            title="Temperature vs Demand Response Curve",
-            template="plotly_dark"
+            title="Temperature vs Demand Response Curve"
+        )
+        fig_sim.update_traces(line_color='#f97316', marker=dict(color='#fbbf24'))
+        fig_sim.update_layout(
+            paper_bgcolor='#111827',
+            plot_bgcolor='#0a0e1a',
+            font=dict(color='#f3f4f6')
         )
         st.plotly_chart(fig_sim, use_container_width=True)
         st.dataframe(sim_res_df[['Temp Delta (°C)', 'Simulated Temp (°C)', 'Predicted Demand (MW)', 'Delta (MW)']])
+
+    # Footer
+    st.markdown("<hr style='border-color: #1f2937;'>", unsafe_allow_html=True)
+    st.markdown('<div class="footer-text">GridSathi | Delhi Electricity Demand Forecasting | XGBoost | 2000–2023</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()

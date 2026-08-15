@@ -41,7 +41,6 @@ def main():
     # Causal Forward Fill: Ensure zero future-data leakage
     df_merged = df_merged.sort_values('datetime').reset_index(drop=True)
     df_merged.ffill(inplace=True)
-    df_merged.bfill(inplace=True) # Fallback only for leading edge if any
     
     missing_after = df_merged.isnull().sum()
     print("\n--- Missing Values After Imputation ---")

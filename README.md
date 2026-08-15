@@ -34,12 +34,13 @@ Gridsathi/
 ├── app/
 │   └── main.py              # Streamlit Web Application
 ├── data/
-│   ├── raw/                 # Raw Kaggle & Open-Meteo CSVs (Generated/Excluded)
-│   └── processed/           # Merged & engineered feature matrices (Generated/Excluded)
+│   ├── raw/                 # Raw Kaggle & Open-Meteo CSVs (Excluded from Git)
+│   └── processed/
+│       └── features.csv     # Pre-built feature matrix (Tracked in Git)
 ├── docs/
 │   └── demo_script.md       # Empirical demo script for presentation
 ├── model/
-│   └── xgb_model.pkl        # Serialized model & benchmark payload (Generated/Excluded)
+│   └── xgb_model.pkl        # Serialized model & benchmark payload (Tracked in Git)
 ├── src/
 │   ├── data/
 │   │   ├── inspect_data.py   # Raw dataset schema inspection
@@ -56,13 +57,31 @@ Gridsathi/
 
 ---
 
-## 🔄 Full Reproduction Pipeline
+## 🚀 Quickstart & Local Launch
 
-> **Note on Excluded Artifacts**: The directories `data/` (raw/processed datasets) and `model/` (serialized XGBoost weights) contain generated artifacts that are intentionally excluded from Git via `.gitignore` to keep the repository lightweight.
+> **Included Runtime Artifacts**: To allow instant out-of-the-box execution upon cloning, this repository tracks the pre-built feature matrix (`data/processed/features.csv`) and trained model weights (`model/xgb_model.pkl`).
 >
-> A **fresh clone** must execute the pipeline commands in the exact order below before starting the Streamlit application.
+> **Excluded Raw Data**: The `data/raw/` directory contains raw source datasets (~32 MB) and is intentionally excluded from Git.
 
-### Step-by-Step Pipeline Commands
+1. **Activate Virtual Environment**:
+   ```bash
+   .\.venv\Scripts\activate
+   ```
+2. **Install Dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. **Launch Streamlit Dashboard Directly**:
+   ```bash
+   streamlit run app/main.py
+   ```
+   *Starts the interactive web application immediately on `http://localhost:8501`.*
+
+---
+
+## 🔄 Full Reproduction Pipeline (Optional)
+
+For users who wish to regenerate the processed data and retrain the XGBoost model from scratch using raw data sources:
 
 1. **Download Historical Weather Data**:
    ```bash
@@ -74,7 +93,7 @@ Gridsathi/
    ```bash
    python src/data/merge_data.py
    ```
-   *Merges power demand data with Open-Meteo weather data on timestamp, applying causal forward fill (`ffill()`) to produce `data/processed/merged.csv` without future data leakage.*
+   *Merges power demand data with weather data, applying causal forward fill (`ffill()`) to produce `data/processed/merged.csv`.*
 
 3. **Anti-Leakage Feature Engineering**:
    ```bash
@@ -86,25 +105,4 @@ Gridsathi/
    ```bash
    python src/models/train_model.py
    ```
-   *Evaluates the 24-hour naive baseline, performs 5-fold TimeSeriesSplit cross-validation, trains the XGBoost Regressor on chronological splits, and serializes the model payload to `model/xgb_model.pkl`.*
-
-5. **Launch Interactive Streamlit Dashboard**:
-   ```bash
-   streamlit run app/main.py
-   ```
-   *Starts the interactive web application on `http://localhost:8501` for real-time scenario forecasting, risk monitoring, and sensitivity analysis.*
-
----
-
-## 🚀 Quickstart & Local Installation
-
-1. **Activate Virtual Environment**:
-   ```bash
-   .\.venv\Scripts\activate
-   ```
-2. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. **Run Reproduction Pipeline & Launch App**:
-   Follow the steps in the [Full Reproduction Pipeline](#-full-reproduction-pipeline) section above.
+   *Evaluates the 24-hour naive baseline, performs 5-fold TimeSeriesSplit cross-validation, trains XGBoost, and serializes `model/xgb_model.pkl`.*

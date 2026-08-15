@@ -1,17 +1,30 @@
+# Raw Data Directory (Ignored to keep raw dataset off GitHub)
 data/raw/
-data/processed/
-model/
+
+# Processed Data Directory (Ignore temp files, un-ignore features.csv)
+data/processed/*
+!data/processed/features.csv
+
+# Model Directory (Ignore temp models, un-ignore trained xgb_model.pkl)
+model/*
+!model/xgb_model.pkl
+
+# Virtual Environment & Caches
 .venv/
-*.zip
-*.log
-.kaggle/kaggle.json
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# System & IDE files
 .vscode/
 .idea/
+.DS_Store
+Thumbs.db
+
+# Logs & Secrets
+*.zip
+*.log
+.kaggle/
 .env
 .env.*
 docx_text.txt
-.DS_Store
-Thumbs.db

@@ -3,144 +3,150 @@ import sys
 import joblib
 import numpy as np
 import pandas as pd
-from xgboost import XGBRegressor
+from sklearn.linear_model import Ridge
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_absolute_error, mean_squared_error
+import xgboost as xgb
 
-def mean_absolute_percentage_error(y_true, y_pred):
+def mean_absolute_percentage_error_custom(y_true, y_pred):
     y_true = np.array(y_true)
     y_pred = np.array(y_pred)
-    # Avoid division by zero
     mask = y_true != 0
     return np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100.0
 
-def main():
-    features_path = os.path.join("data", "processed", "features.csv")
-    model_dir = os.path.join("model")
+def train_hybrid_pipeline(features_csv_path="data/processed/features.csv", model_dir="model"):
     os.makedirs(model_dir, exist_ok=True)
     
-    if not os.path.exists(features_path):
-        print(f"[ERROR] Features file missing at: {features_path}")
+    if not os.path.exists(features_csv_path):
+        print(f"[ERROR] Features file missing at: {features_csv_path}")
         sys.exit(1)
         
-    print(f"Loading features dataset from: {features_path}")
-    df = pd.read_csv(features_path)
-    df['datetime'] = pd.to_datetime(df['datetime'])
-    df = df.sort_values('datetime').reset_index(drop=True)
+    print(f"Loading features dataset from: {features_csv_path}")
+    df = pd.read_csv(features_csv_path)
     
-    # Define Target and Features
-    target_col = 'load'
-    ignore_cols = ['datetime', 'timestamp', 'load', 'Unnamed: 0', 'compensation_method']
-    feature_cols = [c for c in df.columns if c not in ignore_cols]
+    if "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df["datetime"] = df["timestamp"]
+    elif "datetime" in df.columns:
+        df["datetime"] = pd.to_datetime(df["datetime"])
+        df["timestamp"] = df["datetime"]
+        
+    df = df.sort_values("timestamp").reset_index(drop=True)
+
+    # Chronological Split (Split date Oct 1, 2023 or last 3 months)
+    max_date = df["timestamp"].max()
+    split_date = pd.to_datetime("2023-10-01") if max_date >= pd.to_datetime("2023-10-01") else max_date - pd.DateOffset(months=3)
     
-    print(f"Target Column: {target_col}")
-    print(f"Engineered Features ({len(feature_cols)}): {feature_cols}")
-    
-    # Chronological Last 3-Month Holdout Split
-    max_date = df['datetime'].max()
-    split_date = max_date - pd.DateOffset(months=3)
-    
-    train_mask = df['datetime'] < split_date
-    test_mask = df['datetime'] >= split_date
-    
-    train_df = df[train_mask].copy()
-    test_df = df[test_mask].copy()
-    
+    train_df = df[df["timestamp"] < split_date].copy()
+    test_df = df[df["timestamp"] >= split_date].copy()
+
     print("\n--- CHRONOLOGICAL SPLIT RANGES ---")
-    print(f"Train Period: {train_df['datetime'].min()} to {train_df['datetime'].max()} ({len(train_df)} rows)")
-    print(f"Test Period : {test_df['datetime'].min()} to {test_df['datetime'].max()} ({len(test_df)} rows)")
-    
-    X_train, y_train = train_df[feature_cols], train_df[target_col]
-    X_test, y_test = test_df[feature_cols], test_df[target_col]
-    
-    # 1. 24-Hour Naive Baseline Model Evaluation
-    print("\n--- EVALUATING 24-HOUR NAIVE BASELINE ---")
-    # Naive baseline predicts load(t) = lag_24h
-    y_pred_naive = test_df['lag_24h'].values
-    
-    naive_mae = mean_absolute_error(y_test, y_pred_naive)
-    naive_rmse = np.sqrt(mean_squared_error(y_test, y_pred_naive))
-    naive_mape = mean_absolute_percentage_error(y_test, y_pred_naive)
-    
-    print(f"Naive 24h Baseline — MAE: {naive_mae:.2f} MW, RMSE: {naive_rmse:.2f} MW, MAPE: {naive_mape:.2f}%")
-    
-    # 2. Time-Series Cross-Validation on Training Period
-    print("\n--- TIME-SERIES CROSS-VALIDATION (5-FOLD) ON TRAIN SET ---")
+    print(f"Train Period: {train_df['timestamp'].min()} to {train_df['timestamp'].max()} ({len(train_df)} rows)")
+    print(f"Test Period : {test_df['timestamp'].min()} to {test_df['timestamp'].max()} ({len(test_df)} rows)")
+
+    genesis_time = train_df["timestamp"].min()
+
+    trend_features = ["time_step"]
+    xgb_features = [
+        "hour_sin", "hour_cos", "month_sin", "month_cos", "is_weekend", "is_holiday",
+        "temperature_2m", "relative_humidity_2m", "windspeed_10m",
+        "heat_index", "ac_load_proxy", "precipitation", "is_raining",
+        "rain_rolling_3h", "rain_rolling_6h",
+        "lag_1h", "lag_24h", "lag_168h", "rolling_mean_24h"
+    ]
+    xgb_features = [f for f in xgb_features if f in df.columns]
+    target = "load"
+
+    # Stage 1: Base Linear Trend Model
+    print("\n--- STAGE 1: FITTING BASE RIDGE LINEAR TREND MODEL ---")
+    trend_model = Ridge(alpha=1.0)
+    trend_model.fit(train_df[trend_features], train_df[target])
+
+    train_trend = trend_model.predict(train_df[trend_features])
+    test_trend = trend_model.predict(test_df[trend_features])
+    train_residuals = train_df[target] - train_trend
+
+    # Stage 2: TimeSeriesSplit Cross Validation on Residuals
+    print("\n--- STAGE 2: TIME-SERIES CROSS-VALIDATION (5-FOLD) ON RESIDUALS ---")
     tscv = TimeSeriesSplit(n_splits=5)
     cv_maes, cv_rmses, cv_mapes = [], [], []
-    
-    for fold, (train_idx, val_idx) in enumerate(tscv.split(X_train)):
-        X_tr, y_tr = X_train.iloc[train_idx], y_train.iloc[train_idx]
-        X_va, y_va = X_train.iloc[val_idx], y_train.iloc[val_idx]
+
+    for fold, (t_idx, v_idx) in enumerate(tscv.split(train_df)):
+        X_tr, y_tr = train_df.iloc[t_idx][xgb_features], train_residuals.iloc[t_idx]
+        X_va, y_va = train_df.iloc[v_idx][xgb_features], train_df.iloc[v_idx][target]
+        val_trend_slice = train_trend[v_idx]
+
+        fold_model = xgb.XGBRegressor(n_estimators=300, max_depth=5, learning_rate=0.05, n_jobs=-1, random_state=42)
+        fold_model.fit(X_tr, y_tr)
         
-        cv_model = XGBRegressor(n_estimators=100, max_depth=5, learning_rate=0.05, random_state=42, n_jobs=-1)
-        cv_model.fit(X_tr, y_tr)
-        preds_va = cv_model.predict(X_va)
+        preds = val_trend_slice + fold_model.predict(X_va)
+        mae = mean_absolute_error(y_va, preds)
+        rmse = np.sqrt(mean_squared_error(y_va, preds))
+        mape = mean_absolute_percentage_error_custom(y_va, preds)
         
-        cv_maes.append(mean_absolute_error(y_va, preds_va))
-        cv_rmses.append(np.sqrt(mean_squared_error(y_va, preds_va)))
-        cv_mapes.append(mean_absolute_percentage_error(y_va, preds_va))
-        
-    print(f"Cross-Validation Mean MAE: {np.mean(cv_maes):.2f} MW | RMSE: {np.mean(cv_rmses):.2f} MW | MAPE: {np.mean(cv_mapes):.2f}%")
-    
-    # 3. Train Final XGBoost Model
-    print("\n--- TRAINING XGBOOST MODEL ---")
-    xgb_model = XGBRegressor(
-        n_estimators=300,
-        max_depth=5,
-        learning_rate=0.05,
-        random_state=42,
-        n_jobs=-1
-    )
-    xgb_model.fit(X_train, y_train)
-    
-    # 4. Evaluate XGBoost on Holdout Test Set
-    y_pred_xgb = xgb_model.predict(X_test)
-    xgb_mae = mean_absolute_error(y_test, y_pred_xgb)
-    xgb_rmse = np.sqrt(mean_squared_error(y_test, y_pred_xgb))
-    xgb_mape = mean_absolute_percentage_error(y_test, y_pred_xgb)
-    
+        cv_maes.append(mae)
+        cv_rmses.append(rmse)
+        cv_mapes.append(mape)
+        print(f"Fold {fold + 1} MAE: {mae:.2f} MW | RMSE: {rmse:.2f} MW | MAPE: {mape:.2f}%")
+
+    print(f"Mean CV MAE: {np.mean(cv_maes):.2f} MW | Mean RMSE: {np.mean(cv_rmses):.2f} MW | Mean MAPE: {np.mean(cv_mapes):.2f}%")
+
+    # Stage 3: Train Final Residual Model
+    print("\n--- STAGE 3: TRAINING FINAL XGBOOST RESIDUAL MODEL ---")
+    final_xgb = xgb.XGBRegressor(n_estimators=300, max_depth=5, learning_rate=0.05, n_jobs=-1, random_state=42)
+    final_xgb.fit(train_df[xgb_features], train_residuals)
+
+    # Holdout Test Benchmark
+    test_preds = test_trend + final_xgb.predict(test_df[xgb_features])
+    naive_preds = test_df["lag_24h"]
+
+    xgb_mae = mean_absolute_error(test_df[target], test_preds)
+    xgb_rmse = np.sqrt(mean_squared_error(test_df[target], test_preds))
+    xgb_mape = mean_absolute_percentage_error_custom(test_df[target], test_preds)
+
+    naive_mae = mean_absolute_error(test_df[target], naive_preds)
+    naive_rmse = np.sqrt(mean_squared_error(test_df[target], naive_preds))
+    naive_mape = mean_absolute_percentage_error_custom(test_df[target], naive_preds)
+
     print("\n=======================================================")
     print("           MODEL BENCHMARK COMPARISON TABLE           ")
     print("=======================================================")
     print(f"{'Model':<25} | {'MAE (MW)':<10} | {'RMSE (MW)':<10} | {'MAPE (%)':<10}")
     print("-" * 63)
     print(f"{'24h Naive Baseline':<25} | {naive_mae:<10.2f} | {naive_rmse:<10.2f} | {naive_mape:<10.2f}%")
-    print(f"{'XGBoost Regressor':<25} | {xgb_mae:<10.2f} | {xgb_rmse:<10.2f} | {xgb_mape:<10.2f}%")
+    print(f"{'Hybrid Ridge + XGBoost':<25} | {xgb_mae:<10.2f} | {xgb_rmse:<10.2f} | {xgb_mape:<10.2f}%")
     print("=======================================================")
-    
-    # 5. Feature Importances
-    importances = xgb_model.feature_importances_
+
+    # Feature Importances
+    importances = final_xgb.feature_importances_
     feat_imp_df = pd.DataFrame({
-        'feature': feature_cols,
+        'feature': xgb_features,
         'importance': importances
     }).sort_values('importance', ascending=False).reset_index(drop=True)
-    
+
     print("\n--- TOP 10 FEATURE IMPORTANCES ---")
     print(feat_imp_df.head(10))
-    
-    # 6. Save Model Artifacts
-    model_payload = {
-        'model': xgb_model,
-        'feature_cols': feature_cols,
-        'target_col': target_col,
-        'metrics': {
-            'naive': {'mae': naive_mae, 'rmse': naive_rmse, 'mape': naive_mape},
-            'xgb': {'mae': xgb_mae, 'rmse': xgb_rmse, 'mape': xgb_mape},
-            'cv_xgb': {'mae': float(np.mean(cv_maes)), 'rmse': float(np.mean(cv_rmses)), 'mape': float(np.mean(cv_mapes))}
+
+    # Save unified artifact dictionary
+    artifact_path = os.path.join(model_dir, "xgb_model.pkl")
+    artifact_payload = {
+        "trend_model": trend_model,
+        "xgb_model": final_xgb,
+        "model": final_xgb,
+        "trend_features": trend_features,
+        "xgb_features": xgb_features,
+        "feature_cols": xgb_features,
+        "genesis_time": genesis_time,
+        "metrics": {
+            "naive": {"mae": float(naive_mae), "rmse": float(naive_rmse), "mape": float(naive_mape)},
+            "xgb": {"mae": float(xgb_mae), "rmse": float(xgb_rmse), "mape": float(xgb_mape)},
+            "cv_xgb": {"mae": float(np.mean(cv_maes)), "rmse": float(np.mean(cv_rmses)), "mape": float(np.mean(cv_mapes))}
         },
-        'feature_importances': feat_imp_df,
-        'split_info': {
-            'train_min': str(train_df['datetime'].min()),
-            'train_max': str(train_df['datetime'].max()),
-            'test_min': str(test_df['datetime'].min()),
-            'test_max': str(test_df['datetime'].max())
-        }
+        "feature_importances": feat_imp_df
     }
-    
-    model_path = os.path.join(model_dir, "xgb_model.pkl")
-    joblib.dump(model_payload, model_path)
-    print(f"\nTrained model and metrics payload saved to: {model_path}")
+    joblib.dump(artifact_payload, artifact_path)
+    print(f"[✓] Hybrid model artifacts exported to {artifact_path}")
 
 if __name__ == "__main__":
-    main()
+    train_hybrid_pipeline()
+

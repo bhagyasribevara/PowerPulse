@@ -21,7 +21,7 @@ from src.features.build_live_features import create_future_feature_matrix, execu
 from src.data.delhi_geo_nodes import DELHI_ZONAL_HUBS
 
 st.set_page_config(
-    page_title="GridSathi — Electricity Demand Forecasting",
+    page_title="PowerPulse — Electricity Demand Forecasting",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -977,7 +977,7 @@ def main():
     trend_model = artifacts.get("trend_model")
     xgb_model = artifacts.get("xgb_model", artifacts.get("model"))
 
-    st.markdown('<div class="header-title">⚡ GridSathi</div>', unsafe_allow_html=True)
+    st.markdown('<div class="header-title">⚡ PowerPulse</div>', unsafe_allow_html=True)
     st.markdown('<div class="header-subtitle">Delhi Electricity Demand Forecasting & Grid Risk Monitor</div>', unsafe_allow_html=True)
 
     st.sidebar.header("🕹️ Scenario Inputs")
@@ -1120,38 +1120,18 @@ def main():
         st.subheader("🔮 Multi-Day Real-Time Demand Forecasting Engine")
         st.caption("Fetches live meteorological feeds for Delhi (IST) and executes recursive two-stage hybrid inference across 5-day horizon.")
 
-        # Selection Controls
-        c1, c2, c3 = st.columns([1.5, 2, 1.2])
-        
-        now_ist = pd.Timestamp.now(tz="Asia/Kolkata")
-        today_date = now_ist.date()
-        max_date = today_date + pd.Timedelta(days=5)
+        # 1. Forecast Pipeline Trigger & Execution
+        trigger_analysis = st.sidebar.button("⚡ Force Refresh 5-Day Weather & Forecast", key="btn_refresh_forecast") if False else False
 
-        with c1:
-            selected_date = st.date_input(
-                "Select Target Horizon Date",
-                value=today_date,
-                min_value=today_date,
-                max_value=max_date
-            )
+        col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([1.5, 2, 1.2])
 
-        with c2:
-            selected_hours = st.slider(
-                "Select Hourly Time Window (IST)",
-                min_value=0,
-                max_value=23,
-                value=(0, 23),
-                step=1
-            )
-
-        with c3:
+        with col_ctrl3:
             st.write("")
             st.write("")
-            trigger_analysis = st.button("⚡ Run Forecasting Pipeline", type="primary", use_container_width=True)
+            btn_run = st.button("⚡ Run Forecasting Pipeline", type="primary", use_container_width=True)
 
-        # Forecast Pipeline Trigger & Execution
-        if trigger_analysis or "live_forecast_results" not in st.session_state:
-            with st.spinner("Connecting to Weather API & executing recursive hybrid model inference..."):
+        if btn_run or "live_forecast_results" not in st.session_state:
+            with st.spinner("Connecting to Weather API & executing recursive hybrid model inference across full horizon..."):
                 weather_raw = fetch_5day_hourly_weather()
                 genesis = artifacts.get("genesis_time", artifacts.get("split_info", {}).get("train_min", "2000-01-01"))
                 trend_model = artifacts.get("trend_model")
@@ -1163,17 +1143,42 @@ def main():
                 df_forecast_res = execute_recursive_forecast(
                     matrix, trend_model, xgb_model, trend_features, xgb_features
                 )
+                df_forecast_res["predicted_demand_mw"] = df_forecast_res["forecast_mw"]
                 st.session_state["live_forecast_results"] = df_forecast_res
+                st.session_state["cached_forecast_df"] = df_forecast_res
 
         df_full_forecast = st.session_state["live_forecast_results"]
-        
+        available_dates = sorted(df_full_forecast["timestamp"].dt.date.unique())
+
+        with col_ctrl1:
+            selected_date = st.selectbox(
+                "📅 Select Target Horizon Date",
+                available_dates,
+                index=0,
+                format_func=lambda d: d.strftime("%A, %b %d, %Y"),
+                key="operational_date_select"
+            )
+
+        with col_ctrl2:
+            selected_hours = st.slider(
+                "⏰ Select Hourly Time Window (IST)",
+                min_value=0,
+                max_value=23,
+                value=(0, 23),
+                step=1,
+                format="%02d:00",
+                key="operational_hour_slider"
+            )
+
         # Apply Horizon Filters
         mask = (df_full_forecast["timestamp"].dt.date == selected_date) & \
                (df_full_forecast["hour"] >= selected_hours[0]) & \
                (df_full_forecast["hour"] <= selected_hours[1])
         df_target_window = df_full_forecast.loc[mask].copy()
         if df_target_window.empty:
-            df_target_window = df_full_forecast.iloc[:24].copy()
+            df_target_window = df_full_forecast[df_full_forecast["timestamp"].dt.date == selected_date].copy()
+            if df_target_window.empty:
+                df_target_window = df_full_forecast.iloc[:24].copy()
 
         # Display Operational Summary Metrics
         st.markdown("---")
@@ -1371,7 +1376,7 @@ def main():
         )
 
     st.markdown("<hr style='border-color: #1f2937;'>", unsafe_allow_html=True)
-    st.markdown('<div class="footer-text">GridSathi | Delhi Electricity Demand Forecasting | Hybrid Two-Stage Pipeline</div>', unsafe_allow_html=True)
+    st.markdown('<div class="footer-text">PowerPulse | Delhi Electricity Demand Forecasting | Hybrid Two-Stage Pipeline</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
